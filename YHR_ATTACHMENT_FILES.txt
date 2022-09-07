@@ -1,0 +1,13 @@
+*&---------------------------------------------------------------------*
+*								       *
+*----------------------------------------------------------------------*
+REPORT yhr_attachment_files.
+
+INCLUDE yhr_attachment_files_sel.
+INCLUDE yhr_attachment_files_cl.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_file.
+  file=>choose_file( ).
+
+START-OF-SELECTION.
+  file=>main( ).

@@ -1,0 +1,317 @@
+*&---------------------------------------------------------------------*
+*&  Include           YHR_ATTACHMENT_FILES_CL
+*&---------------------------------------------------------------------*
+
+*----------------------------------------------------------------------*
+*       CLASS FILE DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS file DEFINITION.
+
+  PUBLIC SECTION.
+
+    CLASS-METHODS:
+      main,
+      display,
+      modify,
+      choose_file,
+      get_data.
+
+  PRIVATE SECTION.
+
+    CLASS-DATA:
+      file      TYPE xstring,
+      desc_file TYPE so_obj_des.
+*   ls_data    TYPE yys_file.
+
+    CLASS-METHODS: show.
+
+ENDCLASS.                    "FILE DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS FILE IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS file IMPLEMENTATION.
+
+  METHOD main.
+
+    IF p_show = 'X'.
+
+      file=>display( ).
+
+    ELSE.
+
+      file=>get_data( ).
+
+      IF file IS NOT INITIAL.
+        file=>modify( ).
+      ELSE.
+        MESSAGE TEXT-i02 TYPE 'I'.
+      ENDIF.
+
+    ENDIF.
+
+  ENDMETHOD.                    "main
+
+  METHOD show.
+
+    DATA:
+      lv_filename    TYPE string,
+      lv_url         TYPE string,                           "char1024,
+      lv_window_name TYPE char20.
+
+    CONCATENATE 'C:\TEMP\' desc_file INTO lv_filename.
+
+    TRY.
+
+        DATA lo_openxml_not_found TYPE REF TO cx_openxml_not_found.
+
+        CALL METHOD cl_openxml_helper=>store_local_file
+          EXPORTING
+            im_file_name = lv_filename
+            im_data      = file.
+
+      CATCH cx_openxml_not_allowed .
+        DATA lv_str TYPE string.
+        lv_str = lo_openxml_not_found->if_message~get_longtext( ) .
+
+        MESSAGE lv_str TYPE 'E'.
+
+    ENDTRY.
+
+    lv_url = 'FILE:///' && lv_filename.
+
+    CALL METHOD cl_gui_frontend_services=>execute
+      EXPORTING
+        document               = lv_url
+        operation              = ' '
+      EXCEPTIONS
+        file_extension_unknown = 1
+        file_not_found         = 1
+        path_not_found         = 1
+*       ERROR_EXECUTE_FAILED   = 1
+        error_execute_failed   = 3  ""Note 2043916 This is more appropriate with new error handling.
+        error_no_gui           = 2
+        OTHERS                 = 3.
+
+    CASE sy-subrc.
+      WHEN 1.
+*        MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+*            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
+        MESSAGE i001(1r).   "Note 2043916 Message variables were blank otherwise.
+
+      WHEN 2.
+*         MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+*             WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
+        MESSAGE i004(1r).    "Note 2043916 Message variables were blank otherwise.
+
+      WHEN 3.
+*        MESSAGE ID sy-msgid TYPE 'I' NUMBER sy-msgno
+*            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
+        MESSAGE i003(1r).  "Note 2043916 Message variables were blank otherwise.
+*        RAISE FRONTEND_ERROR.
+    ENDCASE.
+
+  ENDMETHOD.                    "show
+
+  METHOD display.
+
+    DATA:
+      reader  TYPE REF TO cl_abap_db_x_reader,
+      lv_line TYPE xstring.
+
+    SELECT SINGLE yhr_file yhr_desc_file INTO (reader,desc_file)
+     FROM ythr_attachment
+     CLIENT SPECIFIED
+     WHERE mandt  = sy-mandt
+     AND   yhr_id = p_name.
+
+    IF sy-subrc <> 0.
+      MESSAGE TEXT-i01 TYPE 'I'.
+      RETURN.
+    ENDIF.
+
+    WHILE reader->data_available( ) = 'X'.
+      lv_line = reader->read( 255 ).
+
+      CONCATENATE file lv_line INTO file IN BYTE MODE.
+
+    ENDWHILE.
+
+    reader->close( ).
+
+    show( ).
+
+  ENDMETHOD.                    "display
+
+  METHOD modify.
+
+    FIELD-SYMBOLS:
+    <fs_file>     TYPE solix.
+
+    DATA:
+      lv_id         TYPE ythr_attachment-yhr_id,
+      ls_attachment TYPE ythr_attachment,
+      writer        TYPE REF TO cl_abap_db_x_writer.
+
+    SELECT SINGLE yhr_id INTO lv_id
+    FROM ythr_attachment
+    CLIENT SPECIFIED
+    WHERE mandt  = sy-mandt
+    AND   yhr_id = p_name.
+
+    IF sy-subrc = 0.
+      DATA:
+        lv_titlebar TYPE string,
+        lv_answer   TYPE char5.
+
+      lv_titlebar = TEXT-m01.
+      REPLACE ALL OCCURRENCES OF '&' IN lv_titlebar WITH p_name.
+
+      CALL FUNCTION 'POPUP_TO_CONFIRM'
+        EXPORTING
+          titlebar              = TEXT-i03
+          text_question         = lv_titlebar
+          text_button_1         = TEXT-b01
+          text_button_2         = TEXT-b02
+          default_button        = '1'
+          display_cancel_button = ''
+        IMPORTING
+          answer                = lv_answer.
+
+      CHECK lv_answer = '1'.
+
+    ENDIF.
+
+    ls_attachment-mandt  = sy-mandt.
+    ls_attachment-yhr_id = p_name.
+
+*    LOOP AT ls_data-t_file ASSIGNING <fs_file>.
+*      CONCATENATE lv_file <fs_file>-line INTO lv_file IN BYTE MODE.
+*    ENDLOOP.
+
+    ls_attachment-yhr_desc_file = desc_file.
+    ls_attachment-yhr_mod_user  = sy-uname.
+    ls_attachment-yhr_mod_dt    = sy-datum.
+    ls_attachment-yhr_mod_tm    = sy-uzeit.
+
+    MODIFY ythr_attachment
+    CLIENT SPECIFIED
+    FROM ls_attachment.
+
+    CHECK sy-subrc = 0.
+
+    UPDATE ythr_attachment CLIENT SPECIFIED
+    SET yhr_file = writer
+    WHERE yhr_id = p_name.
+
+    CHECK sy-subrc = 0.
+
+    writer->write( file ).
+    writer->close( ).
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+
+    MESSAGE TEXT-i04 TYPE 'S'.
+
+  ENDMETHOD.                    "modify
+
+  METHOD get_data.
+
+    DATA:
+      lv_filename TYPE string,
+      lv_path     TYPE string.
+
+    lv_filename = p_file.
+
+    TRY.
+        DATA lo_openxml_not_found TYPE REF TO cx_openxml_not_found.
+
+        CALL METHOD cl_openxml_helper=>load_local_file
+          EXPORTING
+            im_file_name = lv_filename
+          RECEIVING
+            re_data      = file.
+
+      CATCH cx_openxml_not_found INTO lo_openxml_not_found.
+        DATA lv_str TYPE string.
+        lv_str = lo_openxml_not_found->if_message~get_longtext( ) .
+
+        MESSAGE lv_str TYPE 'E'.
+
+    ENDTRY.
+
+    CLEAR lv_filename.
+    CALL FUNCTION 'SO_SPLIT_FILE_AND_PATH'
+      EXPORTING
+        full_name     = p_file
+      IMPORTING
+        stripped_name = lv_filename
+        file_path     = lv_path
+      EXCEPTIONS
+        x_error       = 1
+        OTHERS        = 2.
+
+    IF sy-subrc <> 0.
+* Implement suitable error handling here
+    ENDIF.
+
+    desc_file = lv_filename.
+
+*    CALL FUNCTION 'TRINT_FILE_GET_EXTENSION'
+*      EXPORTING
+*        filename  = p_file
+*        uppercase = 'X'
+*      IMPORTING
+*        extension = lv_ext.
+*
+*    ls_data-attachment_type = lv_ext.
+
+  ENDMETHOD.                    "get_data
+
+  METHOD choose_file.
+
+    FIELD-SYMBOLS:
+    <fs_file>   TYPE file_table.
+
+    DATA:
+      lv_filename TYPE string,
+      lv_ext      TYPE char5,
+      lt_file     TYPE filetable,
+      lv_subrc    TYPE sy-subrc.
+
+    lv_filename = TEXT-t01.
+    CALL METHOD cl_gui_frontend_services=>file_open_dialog
+      EXPORTING
+        window_title            = lv_filename
+        default_extension       = '*.*'
+        initial_directory       = 'C:\'
+        multiselection          = abap_false
+      CHANGING
+        file_table              = lt_file
+        rc                      = lv_subrc
+      EXCEPTIONS
+        file_open_dialog_failed = 1
+        cntl_error              = 2
+        error_no_gui            = 3
+        not_supported_by_gui    = 4
+        OTHERS                  = 5.
+
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid TYPE sy-msgty NUMBER sy-msgno
+                 WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+
+    READ TABLE lt_file ASSIGNING <fs_file> INDEX 1.
+    CHECK sy-subrc = 0.
+
+    p_file = <fs_file>-filename.
+
+  ENDMETHOD.                    "choose_file
+
+ENDCLASS.                    "FILE IMPLEMENTATION

@@ -1,0 +1,6 @@
+PARAMETERS:
+p_name TYPE ythr_attachment-yhr_id OBLIGATORY,
+p_file TYPE char255,
+
+p_show RADIOBUTTON GROUP rad1 DEFAULT 'X',
+p_set  RADIOBUTTON GROUP rad1.
